@@ -11,9 +11,10 @@
 import argparse
 import sys
 import time
+from pathlib import Path
 
 # 支持从项目根目录或 environment/ 目录下运行
-sys.path.insert(0, __file__.rsplit("/play.py", 1)[0])
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from environment.minesweeper_env import MinesweeperEnv, HIDDEN, MINE
 
 # ── ANSI 颜色 ──────────────────────────────────────────────
