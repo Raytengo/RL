@@ -1,0 +1,19 @@
+{
+  "rows": 9,
+  "cols": 9,
+  "mines": 10,
+  "episodes": 20000,
+  "alpha": 0.01,
+  "gamma": 0.99,
+  "lam": 0.8,
+  "eps_start": 0.3,
+  "eps_end": 0.05,
+  "eps_decay": 0.9995,
+  "log_every": 1,
+  "print_every": 500,
+  "ckpt_every": 2000,
+  "window": 500,
+  "seed": 42,
+  "outdir": null,
+  "tag": ""
+}
