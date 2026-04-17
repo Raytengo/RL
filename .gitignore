@@ -1,0 +1,27 @@
+# ─── Python ────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ─── 训练产物(体积大,不要传 GitHub) ─────
+training_evaluation/runs/
+*.npz
+*.pkl
+*.log
+
+# ─── 系统/编辑器垃圾 ──────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ─── Jupyter ──────────────────────────────
+.ipynb_checkpoints/
+
+# ─── 自己的临时实验 ───────────────────────
+scratch/
+tmp/
