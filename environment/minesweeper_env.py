@@ -13,9 +13,23 @@ import copy
 HIDDEN = -1   # 未翻开
 MINE = 9      # 地雷（爆炸后可见）
 
+# 默认 reward shaping。保持小的过程奖励，但让终局胜负占主导。
+DEFAULT_SAFE_OPEN_REWARD_PER_CELL = 0.05
+DEFAULT_WIN_REWARD = 10.0
+DEFAULT_LOSE_REWARD = -10.0
+DEFAULT_REPEAT_REWARD = -0.5
+
 
 class MinesweeperEnv:
-    def __init__(self, grid_size: tuple = (9, 9), num_mines: int = 10):
+    def __init__(
+        self,
+        grid_size: tuple = (9, 9),
+        num_mines: int = 10,
+        safe_open_reward_per_cell: float = DEFAULT_SAFE_OPEN_REWARD_PER_CELL,
+        win_reward: float = DEFAULT_WIN_REWARD,
+        lose_reward: float = DEFAULT_LOSE_REWARD,
+        repeat_reward: float = DEFAULT_REPEAT_REWARD,
+    ):
         """
         grid_size: (rows, cols)
         num_mines: 地雷数量
@@ -23,6 +37,10 @@ class MinesweeperEnv:
         self.rows, self.cols = grid_size
         self.grid_size = grid_size
         self.num_mines = num_mines
+        self.safe_open_reward_per_cell = safe_open_reward_per_cell
+        self.win_reward = win_reward
+        self.lose_reward = lose_reward
+        self.repeat_reward = repeat_reward
 
         # 内部状态（由 reset() 初始化）
         self._mine_map = None      # 真实地雷分布，True=地雷
@@ -66,7 +84,9 @@ class MinesweeperEnv:
             raise ValueError(f"坐标越界：{action}")
         if self._visible[row][col]:
             # 翻已翻开的格子，给小惩罚
-            return self._get_state(), -0.5, False, {"win": False, "repeated": True}
+            reward = self.repeat_reward
+            state = self._get_state(reward=reward)
+            return state, reward, False, {"win": False, "repeated": True}
 
         if self._mine_map[row][col]:
             # 踩雷
@@ -74,22 +94,20 @@ class MinesweeperEnv:
             self._trial_count += 1
             self._done = True
             self._win = False
-            reward = -1.0
+            reward = self.lose_reward
         else:
             # 安全：递归展开
             newly_opened = self._reveal(row, col)
             self._trial_count += newly_opened
+            reward = self.safe_open_reward_per_cell * newly_opened
 
             # 胜利判断：所有非地雷格子都已翻开
             if self._check_win():
                 self._done = True
                 self._win = True
-                reward = 1.0
-            else:
-                # 奖励与一次翻开的格子数成比例（鼓励有效探索）
-                reward = 0.3 + 0.1 * (newly_opened - 1)
+                reward += self.win_reward
 
-        state = self._get_state()
+        state = self._get_state(reward=reward)
         info = {"win": self._win}
         return state, reward, self._done, info
 
@@ -212,7 +230,7 @@ class MinesweeperEnv:
     def _is_valid(self, r, c) -> bool:
         return 0 <= r < self.rows and 0 <= c < self.cols
 
-    def _get_state(self) -> dict:
+    def _get_state(self, reward: float = 0.0) -> dict:
         """构造并返回标准状态字典。"""
         visible_map = []
         for r in range(self.rows):
@@ -231,7 +249,7 @@ class MinesweeperEnv:
             "map": visible_map,
             "done": self._done,
             "win": self._win,
-            "reward": 0.0,        # 由 step() 调用方填充实际奖励
+            "reward": reward,
             "trial_count": self._trial_count,
         }
 

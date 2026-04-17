@@ -11,8 +11,9 @@ SARSA(λ) agent 的训练脚本。
 产物 (存到 --outdir 指定的目录, 默认 training_evaluation/runs/<run_name>/):
     - config.json        本次训练的完整配置
     - log.csv            每局的逐条记录 (episode, win, reward, steps, ...)
-    - checkpoints/       每 --ckpt_every 局保存一次权重
     - final_model.npz    训练结束时的权重
+    - training_summary.png 训练过程图
+    - training_report.md  训练结果总结
 """
 
 import argparse
@@ -30,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from environment import MinesweeperEnv
 from algorithm.agent import SARSALambdaAgent
+from training_evaluation.plot_training import save_training_summary_plot
 
 
 # ─────────────────────────────────────────────────────────────
@@ -43,6 +45,10 @@ def parse_args():
     p.add_argument("--rows",  type=int, default=9)
     p.add_argument("--cols",  type=int, default=9)
     p.add_argument("--mines", type=int, default=10)
+    p.add_argument("--safe-open-reward-per-cell", type=float, default=0.05)
+    p.add_argument("--win-reward", type=float, default=10.0)
+    p.add_argument("--lose-reward", type=float, default=-10.0)
+    p.add_argument("--repeat-reward", type=float, default=-0.5)
 
     # 训练长度
     p.add_argument("--episodes", type=int, default=20000,
@@ -62,8 +68,8 @@ def parse_args():
                    help="每 N 局写一次 csv (1 = 每局都写)")
     p.add_argument("--print_every", type=int, default=500,
                    help="每 N 局打印一次滑动胜率")
-    p.add_argument("--ckpt_every", type=int, default=2000,
-                   help="每 N 局存一次权重")
+    p.add_argument("--ckpt_every", type=int, default=0,
+                   help="每 N 局存一次中途 checkpoint；0 表示不存")
     p.add_argument("--window", type=int, default=500,
                    help="滑动胜率的窗口大小")
 
@@ -73,8 +79,20 @@ def parse_args():
                    help="输出目录, 默认 training_evaluation/runs/<timestamp>")
     p.add_argument("--tag", type=str, default="",
                    help="自定义 run 名后缀, 方便区分实验")
+    p.add_argument("--plot-smooth-window", type=int, default=200,
+                   help="训练完成后自动出图时使用的滑动平均窗口")
 
     return p.parse_args()
+
+
+def configure_console_output():
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -123,11 +141,55 @@ def run_episode(env, agent):
     }
 
 
+def write_training_report(
+    out_path: Path,
+    window: int,
+    final_win_rate: float,
+    total_wins: int,
+    rewards: list[float],
+    steps_list: list[int],
+    trial_counts: list[int],
+    wins_list: list[int],
+):
+    episodes = len(wins_list)
+    losses = episodes - total_wins
+    win_rewards = [reward for reward, win in zip(rewards, wins_list) if win]
+    loss_rewards = [reward for reward, win in zip(rewards, wins_list) if not win]
+    win_steps = [steps for steps, win in zip(steps_list, wins_list) if win]
+    loss_steps = [steps for steps, win in zip(steps_list, wins_list) if not win]
+    win_trials = [count for count, win in zip(trial_counts, wins_list) if win]
+    loss_trials = [count for count, win in zip(trial_counts, wins_list) if not win]
+
+    def avg(values):
+        return float(np.mean(values)) if values else 0.0
+
+    lines = [
+        "## Core Results",
+        f"- Success count: {total_wins}",
+        f"- Failure count: {losses}",
+        f"- Overall win rate: {total_wins / episodes * 100:.3f}%",
+        f"- Last {min(window, episodes)} episodes win rate: {final_win_rate * 100:.3f}%",
+        f"- Average reward: {avg(rewards):.4f}",
+        f"- Average steps: {avg(steps_list):.4f}",
+        f"- Average opened cells: {avg(trial_counts):.4f}",
+        "",
+        "## Split Metrics",
+        f"- Average reward on wins: {avg(win_rewards):.4f}",
+        f"- Average reward on losses: {avg(loss_rewards):.4f}",
+        f"- Average steps on wins: {avg(win_steps):.4f}",
+        f"- Average steps on losses: {avg(loss_steps):.4f}",
+        f"- Average opened cells on wins: {avg(win_trials):.4f}",
+        f"- Average opened cells on losses: {avg(loss_trials):.4f}",
+    ]
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 # ─────────────────────────────────────────────────────────────
 # 主训练循环
 # ─────────────────────────────────────────────────────────────
 
 def main():
+    configure_console_output()
     args = parse_args()
 
     # 固定随机种子, 保证可复现
@@ -143,7 +205,9 @@ def main():
     outdir = Path(args.outdir) if args.outdir else \
              Path(__file__).resolve().parent / "runs" / run_name
     outdir.mkdir(parents=True, exist_ok=True)
-    (outdir / "checkpoints").mkdir(exist_ok=True)
+    checkpoints_dir = outdir / "checkpoints"
+    if args.ckpt_every > 0:
+        checkpoints_dir.mkdir(exist_ok=True)
 
     # 保存配置
     with open(outdir / "config.json", "w") as f:
@@ -153,7 +217,14 @@ def main():
     print(f"[train] 配置: {vars(args)}")
 
     # 初始化环境和 agent
-    env = MinesweeperEnv(grid_size=(args.rows, args.cols), num_mines=args.mines)
+    env = MinesweeperEnv(
+        grid_size=(args.rows, args.cols),
+        num_mines=args.mines,
+        safe_open_reward_per_cell=args.safe_open_reward_per_cell,
+        win_reward=args.win_reward,
+        lose_reward=args.lose_reward,
+        repeat_reward=args.repeat_reward,
+    )
     agent = SARSALambdaAgent(
         alpha=args.alpha,
         gamma=args.gamma,
@@ -173,9 +244,17 @@ def main():
     # 训练主循环
     recent_wins = []        # 用于滑动胜率打印
     start_time = time.time()
+    rewards = []
+    steps_list = []
+    trial_counts = []
+    wins_list = []
 
     for ep in range(1, args.episodes + 1):
         stats = run_episode(env, agent)
+        rewards.append(stats["reward"])
+        steps_list.append(stats["steps"])
+        trial_counts.append(stats["trial_count"])
+        wins_list.append(stats["win"])
 
         recent_wins.append(stats["win"])
         if len(recent_wins) > args.window:
@@ -206,8 +285,8 @@ def main():
             )
 
         # 周期性存 checkpoint
-        if ep % args.ckpt_every == 0:
-            ckpt_path = outdir / "checkpoints" / f"ep_{ep:06d}.npz"
+        if args.ckpt_every > 0 and ep % args.ckpt_every == 0:
+            ckpt_path = checkpoints_dir / f"ep_{ep:06d}.npz"
             np.savez(ckpt_path, w=agent.w, episode=ep,
                      epsilon=agent.epsilon)
 
@@ -227,10 +306,31 @@ def main():
     # 训练总结
     total_time = time.time() - start_time
     final_win_rate = sum(recent_wins) / len(recent_wins) if recent_wins else 0
+    total_wins = sum(wins_list)
     print(f"\n[train] 训练完成, 总用时 {total_time:.1f}s")
     print(f"[train] 最后 {args.window} 局胜率: {final_win_rate*100:.2f}%")
     print(f"[train] 权重保存到: {outdir / 'final_model.npz'}")
     print(f"[train] 日志保存到: {outdir / 'log.csv'}")
+
+    plot_path = save_training_summary_plot(
+        run_dir=outdir.resolve(),
+        out_path=(outdir / "training_summary.png").resolve(),
+        smooth_window=args.plot_smooth_window,
+    )
+    print(f"[train] 训练图保存到: {plot_path}")
+
+    report_path = (outdir / "training_report.md").resolve()
+    write_training_report(
+        out_path=report_path,
+        window=args.window,
+        final_win_rate=final_win_rate,
+        total_wins=total_wins,
+        rewards=rewards,
+        steps_list=steps_list,
+        trial_counts=trial_counts,
+        wins_list=wins_list,
+    )
+    print(f"[train] 训练报告保存到: {report_path}")
 
 
 if __name__ == "__main__":

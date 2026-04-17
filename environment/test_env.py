@@ -5,7 +5,9 @@ MinesweeperEnv 测试套件
 
 import sys
 import random
-sys.path.insert(0, __file__.rsplit("/environment", 1)[0])
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from environment.minesweeper_env import MinesweeperEnv, HIDDEN, MINE
 
@@ -37,7 +39,22 @@ check("state 包含所有必要 key",
 check("grid_size 正确", state["grid_size"] == (9, 9))
 check("初始 done=False", state["done"] == False)
 check("初始 win=False", state["win"] == False)
+check("初始 reward=0.0", state["reward"] == 0.0)
 check("初始 trial_count=0", state["trial_count"] == 0)
+
+env_reward_cfg = MinesweeperEnv(
+    grid_size=(2, 2),
+    num_mines=1,
+    safe_open_reward_per_cell=0.2,
+    win_reward=7.0,
+    lose_reward=-9.0,
+    repeat_reward=-0.25,
+)
+check("reward 参数可配置",
+      env_reward_cfg.safe_open_reward_per_cell == 0.2 and
+      env_reward_cfg.win_reward == 7.0 and
+      env_reward_cfg.lose_reward == -9.0 and
+      env_reward_cfg.repeat_reward == -0.25)
 
 # map 尺寸
 m = state["map"]
@@ -91,8 +108,9 @@ env._trial_count = 0
 
 state, reward, done, info = env.step((0, 1))
 check("安全步 done=False", done == False, f"done={done}, win={info.get('win')}")
-check("安全步 reward > 0", reward > 0, f"reward={reward}")
+check("安全步 reward=0.05", reward == 0.05, f"reward={reward}")
 check("安全步 info['win']=False", info["win"] == False)
+check("安全步 state['reward'] 同步", state["reward"] == reward, f"state_reward={state['reward']}")
 check("翻开后 map[0][1] 不再是 HIDDEN", state["map"][0][1] != HIDDEN)
 check("trial_count 增加", state["trial_count"] > 0)
 
@@ -100,6 +118,7 @@ check("trial_count 增加", state["trial_count"] > 0)
 state2, reward2, done2, info2 = env.step((0, 1))
 check("重复翻格 reward=-0.5", reward2 == -0.5, f"reward={reward2}")
 check("重复翻格 done=False", done2 == False)
+check("重复翻格 state['reward'] 同步", state2["reward"] == reward2, f"state_reward={state2['reward']}")
 check("重复翻格 info 含 'repeated'=True", info2.get("repeated") == True)
 
 
@@ -119,9 +138,10 @@ env._win = False
 env._trial_count = 0
 
 state, reward, done, info = env.step((0, 0))
-check("踩雷 reward=-1.0", reward == -1.0, f"reward={reward}")
+check("踩雷 reward=-10.0", reward == -10.0, f"reward={reward}")
 check("踩雷 done=True", done == True)
 check("踩雷 info['win']=False", info["win"] == False)
+check("踩雷 state['reward'] 同步", state["reward"] == reward, f"state_reward={state['reward']}")
 check("踩雷格子在 map 中显示为 MINE(9)", state["map"][0][0] == MINE,
       f"map[0][0]={state['map'][0][0]}")
 
@@ -181,7 +201,8 @@ check("翻第二格后 done=False", done2 == False, f"done={done2}")
 state, reward, done3, info = env.step((1, 1))
 check("翻完所有安全格后 done=True", done3 == True, f"done={done3}")
 check("翻完所有安全格后 win=True", info["win"] == True)
-check("获胜 reward=1.0", reward == 1.0, f"reward={reward}")
+check("获胜 reward=10.05", reward == 10.05, f"reward={reward}")
+check("获胜 state['reward'] 同步", state["reward"] == reward, f"state_reward={state['reward']}")
 
 
 # ======================================================================
