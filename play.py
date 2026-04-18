@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-扫雷 CLI 游玩入口
+扫雷游玩入口。
 
 用法：
-  python3 play.py                          # 默认 9×9，10 颗地雷
-  python3 play.py --rows 16 --cols 16 --mines 40
-  python3 play.py --rows 9 --cols 9 --mines 10 --no-color
+  python3 play.py                                # 默认 GUI
+  python3 play.py --ui cli
+  python3 play.py --rows 16 --cols 16 --mines 40 --ui gui
+  python3 play.py --rows 9 --cols 9 --mines 10 --ui cli --no-color
 """
 
 import argparse
 import sys
-import time
 from pathlib import Path
 
 # 支持从项目根目录或 environment/ 目录下运行
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from environment.minesweeper_env import MinesweeperEnv, HIDDEN, MINE
+from environment.minesweeper_env import MinesweeperEnv
 
 # ── ANSI 颜色 ──────────────────────────────────────────────
 COLORS = {
@@ -36,6 +36,16 @@ YELLOW  = "\033[93m"
 GRAY    = "\033[90m"
 
 
+def configure_console_output():
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def render_pretty(env, use_color: bool):
     """彩色棋盘渲染。"""
     rows, cols = env.rows, env.cols
@@ -47,7 +57,6 @@ def render_pretty(env, use_color: bool):
     for r in range(rows):
         row_str = f" {r:2d} │"
         for c in range(cols):
-            cell_val = None
             if not env._visible[r][c]:
                 ch = " ·"
                 if use_color:
@@ -88,44 +97,37 @@ def print_status(env, use_color: bool):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="扫雷 CLI 游玩")
+    p = argparse.ArgumentParser(description="扫雷游玩（默认 GUI，可切换 CLI）")
     p.add_argument("--rows",     type=int, default=9,  help="棋盘行数（默认 9）")
     p.add_argument("--cols",     type=int, default=9,  help="棋盘列数（默认 9）")
     p.add_argument("--mines",    type=int, default=10, help="地雷数量（默认 10）")
-    p.add_argument("--no-color", action="store_true",  help="禁用彩色输出")
+    p.add_argument(
+        "--ui",
+        choices=("gui", "cli"),
+        default="gui",
+        help="界面类型：gui 或 cli（默认 gui）",
+    )
+    p.add_argument("--no-color", action="store_true",  help="CLI 模式下禁用彩色输出")
     return p.parse_args()
 
 
-def main():
-    args = parse_args()
-    use_color = not args.no_color
+def play_cli(env: MinesweeperEnv, use_color: bool):
+    import time
 
-    # 验证参数
-    total = args.rows * args.cols
-    if args.mines >= total:
-        print(f"错误：地雷数 ({args.mines}) 必须小于总格子数 ({total})。")
-        sys.exit(1)
-    if args.rows < 2 or args.cols < 2:
-        print("错误：棋盘至少 2×2。")
-        sys.exit(1)
-
-    env = MinesweeperEnv(grid_size=(args.rows, args.cols), num_mines=args.mines)
-
-    session_wins   = 0
+    session_wins = 0
     session_losses = 0
 
     while True:
-        # ── 新局开始 ──
         env.reset()
         start_time = time.time()
 
-        print("\n" + "═" * (args.cols * 3 + 8))
+        print("\n" + "═" * (env.cols * 3 + 8))
         if use_color:
-            print(f"  {BOLD}💣  扫雷  {args.rows}×{args.cols}  地雷 {args.mines} 颗{RESET}")
+            print(f"  {BOLD}扫雷  {env.rows}×{env.cols}  地雷 {env.num_mines} 颗{RESET}")
         else:
-            print(f"  扫雷  {args.rows}×{args.cols}  地雷 {args.mines} 颗")
+            print(f"  扫雷  {env.rows}×{env.cols}  地雷 {env.num_mines} 颗")
         print(f"  输入坐标翻格（行 列，从 0 开始）  |  r = 重开  |  q = 退出")
-        print("═" * (args.cols * 3 + 8))
+        print("═" * (env.cols * 3 + 8))
 
         game_over = False
         while not game_over:
@@ -176,11 +178,11 @@ def main():
                 print()
                 if info["win"]:
                     session_wins += 1
-                    msg = f"  🎉 恭喜！赢了！  翻开 {env._trial_count} 格  用时 {elapsed:.1f}s"
+                    msg = f"  恭喜！赢了！  翻开 {env._trial_count} 格  用时 {elapsed:.1f}s"
                     print((GREEN + BOLD + msg + RESET) if use_color else msg)
                 else:
                     session_losses += 1
-                    msg = f"  💥 踩雷了！游戏结束。  翻开 {env._trial_count} 格  用时 {elapsed:.1f}s"
+                    msg = f"  踩雷了！游戏结束。  翻开 {env._trial_count} 格  用时 {elapsed:.1f}s"
                     print((RED_BG + BOLD + msg + RESET) if use_color else msg)
 
                 total_games = session_wins + session_losses
@@ -197,6 +199,38 @@ def main():
             if again in ("n", "no"):
                 print("感谢游玩！")
                 sys.exit(0)
+
+
+def play_gui(env: MinesweeperEnv):
+    from environment.gui import launch_human_gui
+
+    launch_human_gui(env)
+
+
+def main():
+    configure_console_output()
+    args = parse_args()
+    use_color = not args.no_color
+
+    total = args.rows * args.cols
+    if args.mines >= total:
+        print(f"错误：地雷数 ({args.mines}) 必须小于总格子数 ({total})。")
+        sys.exit(1)
+    if args.rows < 2 or args.cols < 2:
+        print("错误：棋盘至少 2×2。")
+        sys.exit(1)
+
+    env = MinesweeperEnv(grid_size=(args.rows, args.cols), num_mines=args.mines)
+
+    if args.ui == "gui":
+        try:
+            play_gui(env)
+        except (RuntimeError, ImportError) as exc:
+            print(f"错误：{exc}")
+            sys.exit(1)
+        return
+
+    play_cli(env, use_color=use_color)
 
 
 if __name__ == "__main__":

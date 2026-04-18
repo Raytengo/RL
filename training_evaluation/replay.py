@@ -1,12 +1,16 @@
 """
 training_evaluation/replay.py
 
-载入已训练模型并在终端逐步回放模型的扫雷过程。
+载入已训练模型并逐步回放模型的扫雷过程。
 
 用法示例：
   python -m training_evaluation.replay \
     --run training_evaluation/runs/20260417_110523_9x9_m10 \
-    --episodes 1 --delay 0.15
+  --episodes 1 --delay 0.15
+
+  python -m training_evaluation.replay \
+    --run training_evaluation/runs/20260417_110523_9x9_m10 \
+    --ui cli
 """
 
 import argparse
@@ -49,6 +53,12 @@ def parse_args():
         default=500,
         help="单局最多步数，防止意外死循环",
     )
+    parser.add_argument(
+        "--ui",
+        choices=("gui", "cli"),
+        default="gui",
+        help="回放界面：gui 或 cli（默认 gui）",
+    )
     return parser.parse_args()
 
 
@@ -69,7 +79,12 @@ def load_run(run_dir: Path):
     return config, model["w"]
 
 
-def replay_one_episode(env: MinesweeperEnv, agent: SARSALambdaAgent, delay: float, max_steps: int):
+def replay_one_episode_cli(
+    env: MinesweeperEnv,
+    agent: SARSALambdaAgent,
+    delay: float,
+    max_steps: int,
+):
     state = env.reset()
     done = False
     step_idx = 0
@@ -133,13 +148,29 @@ def main():
 
     print(f"[replay] run_dir: {run_dir}")
     print(f"[replay] board: {rows}x{cols}, mines={mines}")
-    print(f"[replay] episodes: {args.episodes}, delay={args.delay}s")
+    print(f"[replay] episodes: {args.episodes}, delay={args.delay}s, ui={args.ui}")
+
+    if args.ui == "gui":
+        from environment.gui import launch_replay_gui
+
+        try:
+            launch_replay_gui(
+                env=env,
+                agent=agent,
+                episodes=args.episodes,
+                delay=args.delay,
+                max_steps=args.max_steps,
+            )
+        except (RuntimeError, ImportError) as exc:
+            print(f"[replay] GUI 启动失败：{exc}")
+            sys.exit(1)
+        return
 
     wins = 0
     for ep in range(1, args.episodes + 1):
         print("\n" + "=" * 48)
         print(f"[episode {ep}/{args.episodes}]")
-        if replay_one_episode(env, agent, delay=args.delay, max_steps=args.max_steps):
+        if replay_one_episode_cli(env, agent, delay=args.delay, max_steps=args.max_steps):
             wins += 1
 
     print("\n" + "=" * 48)
