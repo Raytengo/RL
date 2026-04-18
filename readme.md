@@ -11,4 +11,19 @@
 3. 训练及评估：
    这个部分利用1和2，训练一个RL模型，然后在测试集上进行评估，得到包括成功率、最少步数等指标。
 
+## 运行方式
+
+- 人类游玩（默认 GUI）：
+  `python play.py`
+- 人类游玩（强制 CLI）：
+  `python play.py --ui cli`
+- 模型训练：
+  `python -m training_evaluation.train`
+- 模型评估：
+  `python -m training_evaluation.evaluate --run training_evaluation/runs/best`
+- 模型回放（默认 GUI）：
+  `python -m training_evaluation.replay --run training_evaluation/runs/best`
+- 模型回放（CLI）：
+  `python -m training_evaluation.replay --run training_evaluation/runs/best --ui cli`
+
 
