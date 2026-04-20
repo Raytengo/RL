@@ -25,3 +25,4 @@ Thumbs.db
 # ─── 自己的临时实验 ───────────────────────
 scratch/
 tmp/
+training_evaluation/eval_results/
