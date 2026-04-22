@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Research Pipeline — Minesweeper RL</title>
+<style>
+/* ═══════════════════════════════════════════════════
+   BASE
+═══════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --c1: #1b5e20;   /* Foundation   — deep green */
+  --c2: #0d47a1;   /* Algorithm    — midnight blue */
+  --c3: #b71c1c;   /* Discovery    — crimson */
+  --c4: #e65100;   /* Optimization — burnt orange */
+  --c5: #4a148c;   /* SOTA         — deep purple */
+
+  --c1-light: #e8f5e9;
+  --c2-light: #e3f2fd;
+  --c3-light: #ffebee;
+  --c4-light: #fff3e0;
+  --c5-light: #f3e5f5;
+
+  --text:  #111827;
+  --muted: #6b7280;
+  --border:#d1d5db;
+  --bg:    #f9fafb;
+  --white: #ffffff;
+  --code-bg: #f1f5f9;
+
+  --node-w: 104px;
+  --node-h: 96px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Georgia', 'Times New Roman', serif;
+  min-height: 100vh;
+  padding: 36px 20px 80px;
+}
+
+/* ═══════════════════════════════════════════════════
+   PAGE HEADER
+═══════════════════════════════════════════════════ */
+.page-header {
+  text-align: center;
+  margin-bottom: 36px;
+  max-width: 860px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.page-header h1 {
+  font-size: 20px;
+  font-weight: bold;
+  letter-spacing: .3px;
+  color: var(--text);
+  line-height: 1.3;
+}
+.page-header .sub {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-style: italic;
+  margin-top: 4px;
+  font-family: 'Courier New', monospace;
+}
+.page-header .divider {
+  width: 48px;
+  height: 2px;
+  background: var(--text);
+  margin: 12px auto 0;
+}
+
+/* ═══════════════════════════════════════════════════
+   PIPELINE CANVAS
+═══════════════════════════════════════════════════ */
+.canvas {
+  max-width: 940px;
+  margin: 0 auto;
+  position: relative;
+}
+
+/* ── Phase label strips ── */
+.phase-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 5px;
+}
+.ps-block {
+  height: 3px;
+  flex: none;
+}
+.ps-label {
+  font-size: 8px;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding: 0 4px;
+  margin-top: -1px;
+}
+
+/* ── Node row ── */
+.node-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  position: relative;
+}
+
+/* ── Arrow connectors ── */
+.arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  flex-shrink: 0;
+  align-self: center;
+  padding-top: 10px; /* nudge to align with node center */
+  color: #9ca3af;
+  font-size: 15px;
+  pointer-events: none;
+  user-select: none;
+}
+.arrow.accent { color: #374151; }
+
+/* ── Down connector ── */
+.row-connector {
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 56px;
+  margin: 2px 0;
+  color: #9ca3af;
+  font-size: 18px;
+  user-select: none;
+}
+
+/* ══════════════════════════════════════════════════
+   NODE
+══════════════════════════════════════════════════ */
+.node {
+  width: var(--node-w);
+  min-height: var(--node-h);
+  flex-shrink: 0;
+  border: 1.5px solid var(--border);
+  background: var(--white);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 9px 6px 7px;
+  text-align: center;
+  position: relative;
+  transition: border-color .18s, background .18s, box-shadow .18s, transform .15s;
+  user-select: none;
+}
+.node:hover {
+  border-color: #9ca3af;
+  background: #fafafa;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0,0,0,.08);
+  z-index: 2;
+}
+.node.active {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 16px rgba(0,0,0,.12);
+  z-index: 3;
+}
+.node.key-node {
+  border-style: dashed;
+}
+
+/* Phase-colored left accent bar */
+.node::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 3px;
+  background: var(--node-c, transparent);
+}
+
+/* Step badge */
+.step-badge {
+  position: absolute;
+  top: 5px; right: 6px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--node-c, var(--border));
+  color: var(--node-c, var(--muted));
+  font-size: 8px;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+
+/* Icon */
+.node-icon {
+  font-size: 24px;
+  line-height: 1;
+  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+/* Label */
+.node-label {
+  font-size: 9.5px;
+  font-weight: bold;
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+/* Tiny description */
+.node-sub {
+  font-size: 7.5px;
+  color: var(--muted);
+  font-family: 'Courier New', monospace;
+  margin-top: 3px;
+  line-height: 1.4;
+  font-style: italic;
+}
+
+/* Active node filled state */
+.node.active .node-label { color: var(--node-c, var(--text)); }
+
+/* ══════════════════════════════════════════════════
+   DETAIL PANEL
+══════════════════════════════════════════════════ */
+.detail-wrap {
+  max-width: 940px;
+  margin: 14px auto 0;
+  background: var(--white);
+  border: 1.5px solid var(--border);
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height .38s ease, opacity .28s;
+}
+.detail-wrap.open {
+  max-height: 600px;
+  opacity: 1;
+}
+
+/* Inner layout */
+.detail-inner {
+  display: flex;
+  gap: 0;
+}
+
+/* Left accent bar */
+.detail-accent {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--panel-c, #333);
+}
+
+/* Right content */
+.detail-content {
+  flex: 1;
+  padding: 18px 22px 8px;
+  min-width: 0;
+}
+
+/* Title row */
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.phase-pill {
+  font-size: 8px;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.detail-step-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--text);
+  font-family: Georgia, serif;
+}
+
+/* Body text */
+.detail-body {
+  font-size: 12px;
+  line-height: 1.72;
+  color: #1f2937;
+  font-family: Georgia, serif;
+}
+.detail-body p { margin-bottom: 8px; }
+.detail-body ul { padding-left: 20px; margin-bottom: 8px; }
+.detail-body li { margin-bottom: 3px; }
+.detail-body strong { color: #111; }
+
+/* Tables */
+.detail-body table {
+  border-collapse: collapse;
+  font-size: 11px;
+  margin: 10px 0;
+  font-family: 'Courier New', monospace;
+  width: auto;
+}
+.detail-body th, .detail-body td {
+  border: 1px solid #d1d5db;
+  padding: 4px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+.detail-body th {
+  background: #f3f4f6;
+  font-weight: bold;
+  color: var(--text);
+}
+.detail-body tr:nth-child(even) td { background: #fafafa; }
+
+/* Inline code */
+code {
+  background: var(--code-bg);
+  border: 1px solid #e2e8f0;
+  font-family: 'Courier New', monospace;
+  font-size: 10.5px;
+  padding: 0px 5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+code.good { color: var(--c1); background: var(--c1-light); border-color: #a7d7b5; }
+code.bad  { color: var(--c3); background: var(--c3-light); border-color: #f5a0a0; }
+code.warn { color: var(--c4); background: var(--c4-light); border-color: #fbbf7a; }
+code.key  { color: var(--c5); background: var(--c5-light); border-color: #c4a5e0; }
+
+/* Equation block */
+.eq-block {
+  background: #f8fafc;
+  border-left: 3px solid var(--panel-c, #ccc);
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.8;
+  color: #1f2937;
+}
+
+/* Nav bar */
+.detail-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 22px 12px;
+  border-top: 1px solid #f3f4f6;
+  margin-top: 10px;
+}
+.nav-info {
+  font-size: 9.5px;
+  font-family: 'Courier New', monospace;
+  color: var(--muted);
+}
+.nav-btns { display: flex; gap: 6px; }
+.nav-btn {
+  background: none;
+  border: 1px solid var(--border);
+  padding: 3px 12px;
+  cursor: pointer;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: var(--text);
+  transition: background .15s, border-color .15s;
+}
+.nav-btn:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: #9ca3af;
+}
+.nav-btn:disabled { opacity: .35; cursor: default; }
+
+/* ══════════════════════════════════════════════════
+   PHASE LEGEND + FOOTER
+══════════════════════════════════════════════════ */
+.legend {
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  max-width: 940px;
+  margin: 18px auto 0;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-family: 'Courier New', monospace;
+  color: var(--muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.legend-bar { width: 18px; height: 3px; }
+
+.hint {
+  text-align: center;
+  font-size: 9px;
+  color: #c0c0c0;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+  margin-top: 8px;
+}
+
+/* ══════════════════════════════════════════════════
+   KEY-NODE PULSE (for discovery / SOTA)
+══════════════════════════════════════════════════ */
+@keyframes pulse-border {
+  0%,100% { box-shadow: 0 0 0 0 rgba(183,28,28,.3); }
+  50%      { box-shadow: 0 0 0 5px rgba(183,28,28,0); }
+}
+.node.mine-node { animation: pulse-border 2.6s ease infinite; }
+
+@keyframes pulse-gold {
+  0%,100% { box-shadow: 0 0 0 0 rgba(74,20,140,.25); }
+  50%      { box-shadow: 0 0 0 6px rgba(74,20,140,0); }
+}
+.node.sota-node { animation: pulse-gold 2.8s ease infinite; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!--  PAGE HEADER                                       -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="page-header">
+  <h1>Research Pipeline: Minesweeper Reinforcement Learning</h1>
+  <span class="sub">SARSA(λ) · Q-Learning · Monte Carlo &mdash; with Iterative Optimization</span>
+  <div class="divider"></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════ -->
+<!--  PIPELINE CANVAS                                   -->
+<!-- ══════════════════════════════════════════════════ -->
+<div class="canvas">
+
+  <!-- Phase label strip (row 1) -->
+  <div class="phase-strip" id="strip1"></div>
+
+  <!-- Row 1: nodes 1–6 -->
+  <div class="node-row" id="row1"></div>
+
+  <!-- Down connector -->
+  <div class="row-connector" id="down-arrow" style="opacity:.25;">↓</div>
+
+  <!-- Phase label strip (row 2) -->
+  <div class="phase-strip" id="strip2" style="flex-direction:row-reverse;"></div>
+
+  <!-- Row 2: nodes 11–7 (visual right-to-left) -->
+  <div class="node-row" id="row2" style="flex-direction:row-reverse;"></div>
+
+</div>
+
+<!-- Legend -->
+<div class="legend" id="legend"></div>
+<p class="hint">▸ CLICK ANY NODE TO INSPECT &nbsp;·&nbsp; ← → KEYBOARD NAVIGATION</p>
+
+<!-- Detail panel -->
+<div class="detail-wrap" id="detail-wrap">
+  <div class="detail-inner">
+    <div class="detail-accent" id="detail-accent"></div>
+    <div class="detail-content">
+      <div class="detail-title-row">
+        <span class="phase-pill" id="detail-pill"></span>
+        <span class="detail-step-title" id="detail-step-title"></span>
+      </div>
+      <div class="detail-body" id="detail-body"></div>
+      <div class="detail-nav">
+        <span class="nav-info" id="nav-info"></span>
+        <div class="nav-btns">
+          <button class="nav-btn" id="nav-prev" onclick="navigate(-1)">← Prev</button>
+          <button class="nav-btn" id="nav-next" onclick="navigate(+1)">Next →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════
+// DATA
+// ════════════════════════════════════════════
+const PHASES = {
+  foundation:  { label:'Foundation',   color:'#1b5e20', light:'#e8f5e9' },
+  algorithm:   { label:'Algorithm',    color:'#0d47a1', light:'#e3f2fd' },
+  discovery:   { label:'Discovery',    color:'#b71c1c', light:'#ffebee' },
+  optimize:    { label:'Optimization', color:'#e65100', light:'#fff3e0' },
+  sota:        { label:'SOTA',         color:'#4a148c', light:'#f3e5f5' },
+};
+
+const STEPS = [
+/* 1 */ {
+  id:1, row:1, phase:'foundation',
+  icon:'🌍', label:'Game\nEnvironment', sub:'state · action · BFS',
+  title:'Step 1 — Game Environment Construction',
+  body:`
+<p>A complete Minesweeper environment built from scratch without external game libraries.</p>
+<ul>
+  <li><strong>Board:</strong> 9×9 grid, 10 mines — standard Windows difficulty</li>
+  <li><strong>Cell encoding:</strong> <code>HIDDEN = −1</code> &nbsp; <code>SAFE = 0–8</code> &nbsp; <code>MINE = 9</code></li>
+  <li><strong>BFS cascade:</strong> clicking a "0" cell triggers a breadth-first auto-reveal of all contiguous zero-cells; numbered cells are revealed but not expanded</li>
+  <li><strong>Two interfaces:</strong> CLI (coordinate input) for debugging; Tkinter GUI for human play and agent replay observation</li>
+</ul>
+<p>The environment is the ground truth — everything upstream must interface through it cleanly.</p>`
+},
+/* 2 */ {
+  id:2, row:1, phase:'foundation',
+  icon:'🔌', label:'RL Interface\n& Rewards', sub:'step · reset · mask',
+  title:'Step 2 — RL Interface & Reward Design',
+  body:`
+<p>A standard Gym-style interface exposes the environment to any RL algorithm without coupling.</p>
+<div class="eq-block">env.reset()  →  state_dict<br>env.step((r,c))  →  (state, reward, done, info)<br>env.get_valid_actions()  →  [(r,c), ...]</div>
+<p><strong>Action masking</strong> ensures the agent can only select unrevealed cells — eliminating the need to penalize structurally invalid moves.</p>
+<table>
+  <tr><th>Event</th><th>Reward</th><th>Rationale</th></tr>
+  <tr><td>Safe cell opened (×k cells)</td><td><code class="good">+0.05k</code></td><td>Dense signal; learning does not stall</td></tr>
+  <tr><td>Win (all safe cells open)</td><td><code class="good">+10.0</code></td><td>Primary objective dominates</td></tr>
+  <tr><td>Mine hit</td><td><code class="bad">−10.0</code></td><td>Strong deterrent; 200× per-cell</td></tr>
+  <tr><td>Repeat click</td><td><code class="bad">−0.5</code></td><td>Prevents degenerate loops</td></tr>
+</table>`
+},
+/* 3 */ {
+  id:3, row:1, phase:'algorithm',
+  icon:'🧮', label:'Three\nAlgorithms', sub:'SARSA · MC · Q-learn',
+  title:'Step 3 — Algorithm Implementation (SARSA · MC · Q-Learning)',
+  body:`
+<p>All three algorithms use <strong>linear function approximation</strong>: <code>Q(s, a) = w · φ(s, a)</code>, sharing the same feature extractor.</p>
+<table>
+  <tr><th>Algorithm</th><th>Type</th><th>Update rule (core)</th></tr>
+  <tr><td><strong>SARSA(λ)</strong></td><td>On-policy, bootstrapping</td><td><code>δ = r+γQ(s',a')−Q(s,a) &nbsp; e←γλe+φ &nbsp; w+=αδe</code></td></tr>
+  <tr><td><strong>Q-Learning</strong></td><td>Off-policy, bootstrapping</td><td><code>δ = r+γ·max Q(s',·)−Q(s,a) &nbsp; w+=αδφ</code></td></tr>
+  <tr><td><strong>Monte Carlo</strong></td><td>On-policy, no bootstrap</td><td>Update w from full-episode cumulative return G<sub>t</sub></td></tr>
+</table>
+<p>Shared hyperparameters: <code>α=0.01</code> <code>γ=0.99</code>. SARSA additionally uses <code>λ=0.8</code> eligibility traces.</p>`
+},
+/* 4 */ {
+  id:4, row:1, phase:'algorithm',
+  icon:'🔬', label:'Feature Eng.\n(7-dim)', sub:'local + global φ(s,a)',
+  title:'Step 4 — Feature Engineering: Initial 7-Dimensional Vector',
+  body:`
+<p>Each feature encodes information the agent should use when deciding whether to open cell (r, c).</p>
+<table>
+  <tr><th>#</th><th>Feature</th><th>Formula</th></tr>
+  <tr><td>f1</td><td>Hidden neighbor ratio</td><td><code>#hidden_neighbors / 8</code></td></tr>
+  <tr><td>f2</td><td>Numbered neighbor sum</td><td><code>Σ neighbor_values / 64</code></td></tr>
+  <tr><td>f3</td><td>Danger estimate</td><td><code>f2_sum / #hidden / 8</code></td></tr>
+  <tr><td>f4</td><td>Isolation flag</td><td><code>1 if no numbered neighbors</code></td></tr>
+  <tr><td>f5</td><td>Global hidden ratio</td><td><code>#hidden_total / (rows×cols)</code></td></tr>
+  <tr><td>f6</td><td>Known mine ratio</td><td><code>#exploded_mines / (rows×cols)</code></td></tr>
+  <tr><td>f7</td><td>Bias</td><td><code>1.0</code> (intercept)</td></tr>
+</table>
+<p>f1–f3 capture local danger; f5–f6 encode global game progress; f7 allows a learned intercept.</p>`
+},
+/* 5 */ {
+  id:5, row:1, phase:'algorithm',
+  icon:'📉', label:'Decay ε\n(Baseline)', sub:'ε: 0.30 → 0.05',
+  title:'Step 5 — Baseline: Decay ε-Greedy Strategy',
+  body:`
+<p>Cross-episode exponential ε decay as the baseline exploration schedule.</p>
+<div class="eq-block">ε ← max(0.05,  ε × 0.9995)   &nbsp; [applied after each episode]</div>
+<ul>
+  <li>Start: <code>ε = 0.30</code> &nbsp;→&nbsp; End: <code>ε = 0.05</code> over 20,000 episodes</li>
+  <li>Intuition: explore broadly in early training; commit to the learned policy later</li>
+  <li>Seeds: 3 seeds per configuration; all results reported as mean ± std</li>
+</ul>
+<p>Baseline results with 20,000 episodes (greedy eval, 1,000 episodes, ε=0):</p>
+<table>
+  <tr><th>Algorithm</th><th>Win Rate</th><th>Std Dev</th></tr>
+  <tr><td>SARSA(λ)</td><td><code>66.47%</code></td><td>±0.80%</td></tr>
+  <tr><td>Q-Learning</td><td><code class="good">69.50%</code></td><td>±0.28%</td></tr>
+  <tr><td>Monte Carlo</td><td><code class="bad">55.60%</code></td><td>±7.20%</td></tr>
+  <tr><td>Random baseline</td><td><code class="bad">0.00%</code></td><td>—</td></tr>
+</table>`
+},
+/* 6 */ {
+  id:6, row:1, phase:'discovery', isMine:true,
+  icon:'🔍', label:'Replay\nObservation', sub:'two failures identified',
+  title:'Step 6 — Observation: Watching the Replay',
+  body:`
+<p>We replayed trained agents using the GUI tool and identified <strong>two systematic failure modes</strong> that limit win rate regardless of algorithm:</p>
+<ul>
+  <li><strong>Failure A — First-Click Death (≈12.5%):</strong> The opening move is always random because no board information exists at step 0. Mine probability = 10/81 ≈ 12.3%. The game ends before the agent demonstrates any learned behaviour. This failure is <em>irreducible</em> for the current formulation.</li>
+  <li><strong>Failure B — Late-Game Over-Exploration:</strong> When most of the board is revealed and constraint propagation can deterministically identify safe cells, the global ε (still 5%) causes the agent to make random moves that could instantly end a nearly-won game. ε is unresponsive to the information state.</li>
+</ul>
+<p><strong>Diagnosis:</strong> ε is a blunt global instrument. It does not condition on <em>what the board tells us</em> about uncertainty.</p>`
+},
+/* 7 */ {
+  id:7, row:2, phase:'optimize',
+  icon:'🛡️', label:'Safe First\nClick Metric', sub:'conditional win rate',
+  title:'Step 7 — Fix A: Conditional Win Rate Metric',
+  body:`
+<p>Since first-click death is irreducible, we isolate it from the evaluation metric rather than accepting it as agent error.</p>
+<div class="eq-block">Conditional Win Rate  =  Wins / (Episodes − First-Click Deaths)</div>
+<table>
+  <tr><th>Metric</th><th>SARSA Decay+Adaptive</th></tr>
+  <tr><td>Overall win rate</td><td><code>69.43%</code></td></tr>
+  <tr><td>First-click death rate</td><td><code class="warn">12.63%</code></td></tr>
+  <tr><td><strong>Conditional win rate</strong></td><td><code class="good">79.48%</code></td></tr>
+</table>
+<p>The conditional win rate reveals the agent's <em>actual decision-making quality</em> when it has the chance to act. It also provides a stable cross-algorithm comparison baseline, since first-click death rate is nearly identical across all configurations (~12–13%).</p>`
+},
+/* 8 */ {
+  id:8, row:2, phase:'optimize',
+  icon:'📈', label:'Feature\nUpgrade ×10', sub:'logical inference f8–f10',
+  title:'Step 8 — Feature Upgrade: 7-dim → 10-dim with Inference',
+  body:`
+<p>Three new features derived from <strong>single-pass constraint propagation</strong> — adding a deterministic reasoning layer on top of statistical learning.</p>
+<table>
+  <tr><th>Feature</th><th>Logic</th><th>Type</th></tr>
+  <tr><td><strong>f8 — Inferred Safe</strong></td><td>= 1 when a neighbouring number cell already has all its mine quota filled by flagged cells → this cell is <em>provably safe</em></td><td>Binary</td></tr>
+  <tr><td><strong>f9 — Inferred Mine</strong></td><td>= 1 when a neighbouring number cell has as many remaining hidden cells as its number → this cell is <em>provably a mine</em></td><td>Binary</td></tr>
+  <tr><td><strong>f10 — Continuous Danger</strong></td><td>Max residual mine probability = (number − known_mines) / remaining_hidden across all neighbouring constraints</td><td>Continuous</td></tr>
+</table>
+<p>All three are computed in O(board_size) with per-state tuple-key caching — negligible runtime overhead. f8/f9 deliver <em>certain</em> knowledge that probabilistic features can only approximate.</p>`
+},
+/* 9 */ {
+  id:9, row:2, phase:'optimize',
+  icon:'🧠', label:'Adaptive\nIn-Episode ε', sub:'within-game ε schedule',
+  title:'Step 9 — Fix B: Adaptive In-Episode ε Strategy',
+  body:`
+<p>Condition the per-step exploration rate on the current board state rather than only on training episode number.</p>
+<div class="eq-block">opened_ratio  =  trial_count / (rows × cols)
+ε_local  =  ε_base × (1 − opened_ratio)²</div>
+<ul>
+  <li><strong>Early game</strong> (opened_ratio ≈ 0): <code>ε_local ≈ ε_base</code> — board is mostly unknown; exploration is appropriate</li>
+  <li><strong>Late game</strong> (opened_ratio → 1): <code>ε_local → 0</code> — board is largely known; commit to learned policy</li>
+  <li>Quadratic schedule ensures smooth, front-loaded exploration within each episode</li>
+</ul>
+<table>
+  <tr><th>Strategy</th><th>Win Rate</th><th>Std Dev</th></tr>
+  <tr><td>Fixed ε</td><td><code class="bad">56.33%</code></td><td>±6.96% ← high variance</td></tr>
+  <tr><td>Decay ε (baseline)</td><td><code>66.47%</code></td><td>±0.80%</td></tr>
+  <tr><td>Adaptive ε (this step)</td><td><code class="good">67.27%</code></td><td>±0.17% ← 5× lower std</td></tr>
+</table>`
+},
+/* 10 */ {
+  id:10, row:2, phase:'sota',
+  icon:'🏆', label:'Decay +\nAdaptive SOTA', sub:'best config · 69.4%',
+  title:'Step 10 — SOTA: Decay + Adaptive ε Combined',
+  body:`
+<p>Decay and Adaptive operate on <em>orthogonal dimensions</em> of the exploration problem and compose without conflict.</p>
+<div class="eq-block"># Cross-episode (Decay): agent skill grows over training
+ε_base  ←  max(0.05,  ε_base × 0.9995)   [per episode]
+
+# Within-episode (Adaptive): exploit board information
+ε_local  =  ε_base × (1 − opened_ratio)²   [per step]</div>
+<table>
+  <tr><th>Strategy</th><th>Win Rate</th><th>Cond. Win Rate</th><th>Std Dev</th></tr>
+  <tr><td>Fixed</td><td>56.33%</td><td>64.22%</td><td>±6.96%</td></tr>
+  <tr><td>Decay</td><td>66.47%</td><td>75.51%</td><td>±0.80%</td></tr>
+  <tr><td>Adaptive</td><td>67.27%</td><td>76.50%</td><td>±0.17%</td></tr>
+  <tr><td><strong>Decay + Adaptive</strong></td><td><code class="good">69.43%</code></td><td><code class="good">79.48%</code></td><td><code class="good">±0.41%</code></td></tr>
+</table>
+<p>Best win rate and second-lowest variance. Random baseline: <code class="bad">0.00%</code> → SOTA: <code class="key">+69.43 pp</code></p>`
+},
+/* 11 */ {
+  id:11, row:2, phase:'sota',
+  icon:'📊', label:'Results &\nAblations', sub:'algorithm · λ · difficulty',
+  title:'Step 11 — Comprehensive Results & Ablations',
+  body:`
+<p><strong>Algorithm comparison</strong> (Decay ε, 20,000 episodes × 3 seeds, 9×9/10 mines):</p>
+<table>
+  <tr><th>Algorithm</th><th>Win Rate</th><th>Cond. Win Rate</th><th>Std</th><th>Time/ep</th></tr>
+  <tr><td>Q-Learning</td><td><code class="good">69.50%</code></td><td>79.46%</td><td>±0.28%</td><td>10.1 ms</td></tr>
+  <tr><td>SARSA(λ)</td><td>66.47%</td><td>75.51%</td><td>±0.80%</td><td>11.9 ms</td></tr>
+  <tr><td>Monte Carlo</td><td><code class="bad">55.60%</code></td><td>63.80%</td><td>±7.20%</td><td>8.3 ms</td></tr>
+</table>
+<p><strong>λ ablation</strong> (SARSA, Decay+Adaptive ε):</p>
+<table>
+  <tr><th>λ</th><th>Win Rate</th><th>Cond. Win Rate</th><th>Std</th></tr>
+  <tr><td>0.0 (one-step TD)</td><td>69.50%</td><td>79.37%</td><td>±0.29%</td></tr>
+  <tr><td>0.8 (default)</td><td><code class="good">69.43%</code></td><td><code class="good">79.48%</code></td><td>±0.41%</td></tr>
+  <tr><td>1.0 (near MC)</td><td>67.83%</td><td>77.39%</td><td>±1.45%</td></tr>
+</table>
+<p><strong>Difficulty scaling</strong>: 4×4 → <code>76.0%</code> (cond. 87.0%) &nbsp; 6×6 → <code>62.5%</code> (cond. 72.5%) &nbsp; 9×9 → <code>69.4%</code> (cond. 79.5%).<br>First-click death ≈ 12–14% across all boards — a fixed property of mine density.</p>`
+},
+];
+
+// ════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════
+let activeStep = null;
+
+// ════════════════════════════════════════════
+// PHASE WIDTHS (for phase strip)
+// ════════════════════════════════════════════
+// Row 1 phase groups: foundation(1-2), algorithm(3-5), discovery(6)
+// Row 2 phase groups (visual L-R = step 11,10,9,8,7):
+//   sota(11,10), optimize(9,8,7)
+
+const NODE_W = 104;
+const ARROW_W = 22;
+
+function phaseStripRow1() {
+  // Steps 1,2 = foundation; 3,4,5 = algorithm; 6 = discovery
+  return [
+    { phase:'foundation', count:2 },
+    { phase:'algorithm',  count:3 },
+    { phase:'discovery',  count:1 },
+  ];
+}
+
+function phaseStripRow2() {
+  // Visual order L-R: 11,10 = sota; 9,8,7 = optimize
+  return [
+    { phase:'sota',     count:2 },
+    { phase:'optimize', count:3 },
+  ];
+}
+
+function buildStrip(el, groups, reversed) {
+  const totalItems = groups.reduce((a,g) => a+g.count, 0);
+  const totalArrows = totalItems - 1;
+
+  let groupIdx = 0;
+  let remaining = groups[0].count;
+  let itemsDone = 0;
+
+  // Build an ordered array of segments (phase-bar + arrows between)
+  const segs = [];
+  for (let i = 0; i < totalItems; i++) {
+    segs.push({ type:'node', phase: groups[groupIdx].phase });
+    if (i < totalItems - 1) segs.push({ type:'arrow' });
+
+    remaining--;
+    if (remaining === 0) {
+      groupIdx++;
+      if (groupIdx < groups.length) remaining = groups[groupIdx].count;
+    }
+  }
+
+  if (reversed) segs.reverse();
+
+  let curPhase = null;
+  let curStart = 0;
+  let curPx = 0;
+  let x = 0;
+
+  function flush(endX) {
+    if (curPhase === null) return;
+    const ph = PHASES[curPhase];
+    const bar = document.createElement('div');
+    bar.className = 'ps-block';
+    bar.style.width = (endX - curStart) + 'px';
+    bar.style.background = ph.color;
+    bar.style.flex = 'none';
+
+    const label = document.createElement('span');
+    label.className = 'ps-label';
+    label.style.color = ph.color;
+    label.textContent = ph.label;
+
+    el.appendChild(bar);
+    el.appendChild(label);
+  }
+
+  segs.forEach(seg => {
+    if (seg.type === 'node') {
+      const w = NODE_W;
+      if (seg.phase !== curPhase) {
+        flush(x);
+        curPhase = seg.phase;
+        curStart = x;
+      }
+      x += w;
+    } else {
+      x += ARROW_W;
+    }
+  });
+  flush(x);
+}
+
+// ════════════════════════════════════════════
+// BUILD BOARD
+// ════════════════════════════════════════════
+function buildBoard() {
+  const row1El = document.getElementById('row1');
+  const row2El = document.getElementById('row2');
+  const strip1El = document.getElementById('strip1');
+  const strip2El = document.getElementById('strip2');
+
+  row1El.innerHTML = '';
+  row2El.innerHTML = '';
+  strip1El.innerHTML = '';
+  strip2El.innerHTML = '';
+
+  const row1Steps = STEPS.filter(s => s.row === 1);               // 1–6
+  const row2Steps = [...STEPS.filter(s => s.row === 2)].reverse(); // 11–7 visual
+
+  // Phase strips
+  buildStrip(strip1El, phaseStripRow1(), false);
+  buildStrip(strip2El, phaseStripRow2(), true);
+
+  // Nodes
+  function addRow(steps, container, arrowChar) {
+    steps.forEach((step, i) => {
+      if (i > 0) {
+        const arr = document.createElement('div');
+        arr.className = 'arrow';
+        arr.textContent = arrowChar;
+        container.appendChild(arr);
+      }
+      container.appendChild(makeNode(step));
+    });
+  }
+
+  addRow(row1Steps, row1El, '→');
+  addRow(row2Steps, row2El, '←');
+}
+
+function makeNode(step) {
+  const ph = PHASES[step.phase];
+  const div = document.createElement('div');
+  div.className = 'node' +
+    (step.isMine ? ' mine-node' : '') +
+    (step.id === 10 ? ' sota-node' : '');
+  div.id = `node-${step.id}`;
+  div.style.setProperty('--node-c', ph.color);
+  div.title = step.label.replace('\n', ' ');
+
+  // Step badge
+  const badge = document.createElement('div');
+  badge.className = 'step-badge';
+  badge.textContent = step.id;
+
+  // Icon
+  const icon = document.createElement('div');
+  icon.className = 'node-icon';
+  icon.textContent = step.icon;
+
+  // Label
+  const label = document.createElement('div');
+  label.className = 'node-label';
+  label.innerHTML = step.label.replace('\n', '<br>');
+
+  // Sub
+  const sub = document.createElement('div');
+  sub.className = 'node-sub';
+  sub.textContent = step.sub;
+
+  div.appendChild(badge);
+  div.appendChild(icon);
+  div.appendChild(label);
+  div.appendChild(sub);
+
+  div.addEventListener('click', () => openStep(step.id));
+  return div;
+}
+
+// ════════════════════════════════════════════
+// DETAIL PANEL
+// ════════════════════════════════════════════
+function openStep(id) {
+  const step = STEPS.find(s => s.id === id);
+  if (!step) return;
+  const ph = PHASES[step.phase];
+
+  // Deselect old
+  if (activeStep !== null) {
+    document.getElementById(`node-${activeStep}`)?.classList.remove('active');
+  }
+
+  // Select new
+  activeStep = id;
+  const nodeEl = document.getElementById(`node-${id}`);
+  nodeEl.classList.add('active');
+  nodeEl.style.setProperty('--node-c', ph.color);
+  nodeEl.style.background = ph.light;
+
+  // Panel content
+  document.getElementById('detail-accent').style.background = ph.color;
+  document.getElementById('detail-pill').style.background = ph.color;
+  document.getElementById('detail-pill').textContent = ph.label.toUpperCase();
+  document.getElementById('detail-step-title').textContent = step.title;
+  document.getElementById('detail-body').innerHTML = step.body;
+
+  const idx = STEPS.findIndex(s => s.id === id);
+  document.getElementById('nav-info').textContent = `Step ${idx + 1} of ${STEPS.length}`;
+  document.getElementById('nav-prev').disabled = (idx === 0);
+  document.getElementById('nav-next').disabled = (idx === STEPS.length - 1);
+
+  // Panel open
+  const wrap = document.getElementById('detail-wrap');
+  wrap.style.setProperty('--panel-c', ph.color);
+  wrap.classList.add('open');
+
+  // Light up down arrow once row 1 is touched
+  document.getElementById('down-arrow').style.opacity = '0.8';
+
+  // Scroll into view
+  setTimeout(() => wrap.scrollIntoView({ behavior:'smooth', block:'nearest' }), 80);
+}
+
+function navigate(dir) {
+  const idx = STEPS.findIndex(s => s.id === activeStep);
+  const next = idx + dir;
+  if (next >= 0 && next < STEPS.length) openStep(STEPS[next].id);
+}
+
+// ════════════════════════════════════════════
+// KEYBOARD
+// ════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { e.preventDefault(); navigate(+1); }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); navigate(-1); }
+  if (e.key === 'Escape') {
+    const wrap = document.getElementById('detail-wrap');
+    wrap.classList.remove('open');
+    if (activeStep !== null) {
+      const ph = PHASES[STEPS.find(s=>s.id===activeStep).phase];
+      const nodeEl = document.getElementById(`node-${activeStep}`);
+      nodeEl.classList.remove('active');
+      nodeEl.style.background = '';
+    }
+    activeStep = null;
+  }
+});
+
+// ════════════════════════════════════════════
+// LEGEND
+// ════════════════════════════════════════════
+function buildLegend() {
+  const el = document.getElementById('legend');
+  Object.entries(PHASES).forEach(([key, ph]) => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `
+      <div class="legend-bar" style="background:${ph.color}"></div>
+      <span>${ph.label}</span>`;
+    el.appendChild(item);
+  });
+}
+
+// ════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════
+buildBoard();
+buildLegend();
+
+// Auto-open step 1 after a brief delay
+setTimeout(() => openStep(1), 500);
+</script>
+</body>
+</html>

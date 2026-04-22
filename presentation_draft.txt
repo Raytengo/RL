@@ -1,0 +1,341 @@
+================================================================================
+  MINESWEEPER RL: LEARNING TO SWEEP MINES
+  Group Presentation Draft (Plain Text Version)
+================================================================================
+
+GOAL: Implement the classic RL algorithms taught in class and push the win rate
+on Minesweeper as high as possible through principled iterative improvements.
+
+================================================================================
+SLIDE 1 — TITLE
+================================================================================
+
+Reinforcement Learning for Minesweeper
+Implementing and Optimizing SARSA(lambda), Q-Learning, and Monte Carlo
+
+================================================================================
+SLIDE 2 — GAME INTRODUCTION: WHY MINESWEEPER?
+================================================================================
+
+WHAT IS MINESWEEPER?
+  - A 9x9 grid with 10 hidden mines
+  - Each turn: choose an unrevealed cell to open
+      Safe cell  ->  reveals a number (0-8) counting adjacent mines
+                     if 0, auto-expands via BFS cascade
+      Mine       ->  game over
+  - Win condition: reveal every non-mine cell
+
+WHY INTERESTING FOR RL?
+  - Partial observability: mine layout is hidden; numbers are the only clues
+  - Sequential decisions: each choice changes the information state
+  - Sparse yet structured rewards: one mistake ends everything
+  - Mix of logic and luck: ~12% of games are decided by the first random click
+
+================================================================================
+SLIDE 3 — PROJECT PIPELINE OVERVIEW
+================================================================================
+
+Five development phases:
+
+  [ Environment ]  ->  [ Algorithms ]  ->  [ Observe & Debug ]  ->  [ Optimize ]  ->  [ SOTA ]
+     Env + API          SARSA/MC/QL         Replay watch            3 fixes            Results
+     Rewards            Features (7-dim)    Problem analysis        Features x10
+                        Decay epsilon                               Adaptive epsilon
+
+Key principle: BUILD -> OBSERVE -> DIAGNOSE -> FIX  (not blind tuning)
+
+================================================================================
+SLIDE 4 — ENVIRONMENT CONSTRUCTION
+================================================================================
+
+STATE REPRESENTATION (each cell in the visible grid):
+
+  Value  |  Meaning
+  -------|------------------------------------------
+    -1   |  Hidden (not yet revealed)
+   0-8   |  Revealed: count of adjacent mines
+    9    |  Mine (revealed after explosion)
+
+STANDARD RL INTERFACE:
+  state  = env.reset()                          # start a new game
+  valid  = env.get_valid_actions()              # all unrevealed cells
+  state, reward, done, info = env.step((r,c))  # take action
+
+BFS CASCADE: clicking a "0" cell auto-reveals all connected zero-cells.
+This exactly matches real Minesweeper rules.
+
+TWO PLAY MODES:
+  - CLI mode  : human types coordinates; useful for debugging
+  - GUI mode  : visual Tkinter board for replay and demo
+
+================================================================================
+SLIDE 5 — REWARD DESIGN
+================================================================================
+
+  Event                          |  Reward
+  -------------------------------|----------
+  Safe cell opened (per cell)    |   +0.05
+  Win (all safe cells revealed)  |  +10.0
+  Hit a mine                     |  -10.0
+  Click already-revealed cell    |   -0.5
+
+DESIGN RATIONALE:
+  - Small per-cell reward (+0.05): dense signal; agent is not flying blind
+  - Large terminal rewards (+/-10): winning stays the primary objective
+  - Repeat-click penalty: discourages degenerate loops
+
+================================================================================
+SLIDE 6 — ALGORITHM IMPLEMENTATION
+================================================================================
+
+All three algorithms share LINEAR FUNCTION APPROXIMATION:
+
+  Q(s, a) = w . phi(s, a)
+
+where phi(s,a) is a hand-crafted feature vector and w is learned.
+
+--- SARSA(lambda) — On-Policy with Eligibility Traces ---
+  delta  = r + gamma * Q(s', a') - Q(s, a)   [TD error]
+  e      <- gamma * lambda * e + phi(s, a)   [eligibility trace]
+  w      <- w + alpha * delta * e             [weight update]
+  Parameters: alpha=0.01, gamma=0.99, lambda=0.8
+
+--- Q-Learning — Off-Policy Bootstrapping ---
+  delta = r + gamma * max_{a'} Q(s', a') - Q(s, a)
+  w     <- w + alpha * delta * phi(s, a)
+
+--- Monte Carlo — Full-Episode Returns ---
+  Update w using actual cumulative return G_t after each complete episode.
+  No bootstrapping.
+
+All three use epsilon-greedy with ACTION MASKING — agent only selects from
+unrevealed cells, eliminating invalid moves entirely.
+
+================================================================================
+SLIDE 7 — FEATURE ENGINEERING (INITIAL: 7-DIMENSIONAL)
+================================================================================
+
+Feature vector phi(s, a) for cell (r, c):
+
+  f1  |  Hidden neighbor ratio: #hidden_neighbors / 8
+  f2  |  Numbered neighbor sum: sum(neighbor_values) / 64
+  f3  |  Danger estimate: f2_sum / #hidden / 8
+  f4  |  Isolation flag: 1 if no numbered neighbors
+  f5  |  Global hidden ratio: fraction of board still hidden
+  f6  |  Known mine ratio: fraction showing exploded mines
+  f7  |  Bias: fixed at 1.0 (intercept term)
+
+BASELINE DECAY EPSILON STRATEGY:
+  epsilon <- max(0.05, epsilon * 0.9995)   [per episode]
+  Decays from 0.30 -> 0.05 over 20,000 training episodes.
+  Rationale: explore early, exploit later.
+
+================================================================================
+SLIDE 8 — INITIAL RESULTS: SOMETHING FEELS WRONG
+================================================================================
+
+After 20,000 episodes, three algorithms + decay epsilon:
+
+  Algorithm        |  Training Win Rate (last 500)  |  Greedy Eval (1000 ep)
+  -----------------|-------------------------------|------------------------
+  SARSA(lambda)    |            ~49%               |         66.5%
+  Q-Learning       |            ~49%               |         69.5%
+  Monte Carlo      |            ~35%               |   55.6%  (HIGH VARIANCE)
+  Random baseline  |             --                |          0.0%
+
+Questions this raises:
+  - Why is greedy eval 15-20 pp higher than training win rate?
+  - Why is Monte Carlo so unstable?
+  - What is epsilon-exploration actually costing us?
+
+================================================================================
+SLIDE 9 — WATCHING THE REPLAY: SPOTTING THE PROBLEMS
+================================================================================
+
+We used the GUI replay tool to watch the trained agent play in real time.
+
+TWO CLEAR PROBLEMS OBSERVED:
+
+  PROBLEM 1 — First-click death:
+    Some games end on move 1, before the agent does anything meaningful.
+    The very first action must be random (zero board information available).
+    ~1 in 8 games ends immediately.
+
+  PROBLEM 2 — Late-game random clicking despite knowing the answer:
+    When most of the board is revealed and logic can clearly identify safe cells,
+    the agent still clicks randomly 5% of the time (epsilon=0.05).
+    On a near-complete board, one wrong random click is game over.
+
+ROOT CAUSE: epsilon is a blunt global instrument. It does not respond to
+what the game state tells us about what is safe and what is not.
+
+================================================================================
+SLIDE 10 — PROBLEM 1: FIRST-CLICK DEATH
+================================================================================
+
+THE ISSUE:
+  - First move: all cells look identical, no information exists
+  - Mine probability = 10/81 ~ 12.3%
+  - This is IRREDUCIBLE — no algorithm can learn its way out
+
+OUR FIX — CONDITIONAL WIN RATE:
+  Conditional Win Rate = Wins / (Episodes - First-Click-Deaths)
+
+This measures agent SKILL, not luck:
+
+  Metric                |  SARSA(lambda) Decay+Adaptive
+  ----------------------|-------------------------------
+  Overall win rate      |          69.43%
+  First-click death     |          12.63%
+  Conditional win rate  |          79.48%
+
+Removing first-click noise gives a cleaner picture of what was actually learned.
+
+================================================================================
+SLIDE 11 — PROBLEM 2 & FIX: ADAPTIVE IN-EPISODE EPSILON
+================================================================================
+
+THE ISSUE:
+  Global decay epsilon sets the SAME exploration rate for:
+    - Move 1  (board blank, exploration makes sense)
+    - Move 50 (board nearly solved, exploration is wasteful)
+
+OUR SOLUTION — ADAPTIVE IN-EPISODE EPSILON:
+  opened_ratio = state["trial_count"] / (rows * cols)
+  epsilon_local = epsilon_base * (1 - opened_ratio)^2
+
+  Early game:  opened_ratio ~ 0  ->  epsilon_local ~ epsilon_base  (full exploration)
+  Late game:   opened_ratio -> 1 ->  epsilon_local -> 0            (pure exploitation)
+
+Quadratic schedule ensures smooth, front-loaded exploration.
+
+  Strategy    |  Win Rate      |  Std Dev
+  ------------|----------------|----------
+  Fixed       |  56.33%        |  +/-6.96%
+  Decay only  |  66.47%        |  +/-0.80%
+  Adaptive    |  67.27%        |  +/-0.17%   <- 5x lower variance than Fixed
+
+================================================================================
+SLIDE 12 — COMBINING DECAY + ADAPTIVE = SOTA
+================================================================================
+
+TWO ORTHOGONAL IMPROVEMENTS, COMPOSABLE:
+
+  # After each episode (cross-episode learning):
+  epsilon_base <- max(0.05, epsilon_base * 0.9995)
+
+  # At each step within an episode (within-game adaptation):
+  epsilon_local = epsilon_base * (1 - opened_ratio)^2
+
+  Decay    : temporal dimension — as agent improves, less global exploration needed
+  Adaptive : spatial dimension  — as game unfolds, local exploration should drop
+
+  Strategy           |  Win Rate   |  Std Dev
+  -------------------|-------------|----------
+  Fixed              |  56.33%     |  +/-6.96%
+  Decay              |  66.47%     |  +/-0.80%
+  Adaptive           |  67.27%     |  +/-0.17%
+  Decay + Adaptive   |  69.43%     |  +/-0.41%   <- BEST WIN RATE AND LOW VARIANCE
+
+================================================================================
+SLIDE 13 — FEATURE UPGRADE: 7-DIM -> 10-DIM
+================================================================================
+
+Added three LOGICAL INFERENCE features using single-pass constraint propagation:
+
+  f8  —  Inferred Safe:
+    = 1 if a neighboring number cell already has all its mines accounted for.
+    This cell is PROVABLY safe — guaranteed, not probabilistic.
+
+  f9  —  Inferred Mine:
+    = 1 if a neighboring number cell's remaining hidden count equals its number.
+    This cell is PROVABLY a mine.
+
+  f10 —  Continuous Danger Score:
+    Maximum residual mine probability across all neighboring constraints.
+    Soft version of f9 for ambiguous situations.
+
+WHY THIS MATTERS:
+  - f8/f9 give the agent DETERMINISTIC KNOWLEDGE — no learning required, just logic
+  - f10 provides a gradient where f9 is ambiguous
+  - All computed in O(board_size) with per-state caching — zero overhead
+
+The 10-dim vector gives the agent an explicit reasoning layer on top of
+statistical learning.
+
+================================================================================
+SLIDE 14 — COMPREHENSIVE RESULTS
+================================================================================
+
+--- ALGORITHM COMPARISON (Decay epsilon, 20,000 episodes x 3 seeds) ---
+
+  Algorithm      |  Win Rate   |  Cond. Win Rate  |  Std Dev   |  Episode Time
+  ---------------|-------------|------------------|------------|---------------
+  Q-Learning     |  69.50%     |  79.46%          |  +/-0.28%  |  10.1 ms
+  SARSA(lambda)  |  66.47%     |  75.51%          |  +/-0.80%  |  11.9 ms
+  Monte Carlo    |  55.60%     |  63.80%          |  +/-7.20%  |   8.3 ms
+  Random         |   0.00%     |   0.00%          |    --      |   0.05 ms
+
+  Finding: Q-Learning slightly outperforms SARSA(lambda). Monte Carlo is
+  unreliable — std dev of 7.20% means training outcome is unpredictable.
+
+--- LAMBDA ABLATION (SARSA, Decay+Adaptive epsilon, 3 seeds) ---
+
+  lambda  |  Win Rate         |  Cond. Win Rate
+  --------|-------------------|------------------
+  0.0     |  69.50% +/-0.29%  |  79.37%
+  0.4     |  68.93% +/-0.66%  |  79.08%
+  0.8     |  69.43% +/-0.41%  |  79.48%   <- DEFAULT, BEST STABILITY
+  1.0     |  67.83% +/-1.45%  |  77.39%   <- instability rises
+
+  Finding: lambda has limited effect in this domain; lambda=1.0 hurts.
+
+--- DIFFICULTY SCALING ---
+
+  Board           |  Win Rate          |  Cond. Win Rate
+  ----------------|--------------------|-----------------
+  4x4 / 2 mines  |  76.00% +/-2.89%   |  86.97%
+  6x6 / 5 mines  |  62.47% +/-0.93%   |  72.45%
+  9x9 / 10 mines |  69.43% +/-0.41%   |  79.48%
+
+  Finding: first-click death (~12-14%) is consistent — purely mine density.
+  9x9 conditionally outperforms 6x6: larger boards give logical features more room.
+
+================================================================================
+SLIDE 15 — CONCLUSION & TAKEAWAYS
+================================================================================
+
+WHAT WE BUILT:
+  - Complete RL pipeline: environment -> features -> algorithms -> evaluation
+  - CLI + GUI interfaces for human play and agent replay
+  - Five ablation experiments with reproducible results (3 seeds each)
+  - run_all.py: one-command full pipeline execution
+
+WHAT WE LEARNED:
+
+  1. EPSILON STRATEGY > ALGORITHM CHOICE
+     Fixed -> Decay+Adaptive gap: +13 pp
+     Best algorithm vs worst:       +14 pp
+     The HOW of exploration matters as much as the WHAT of the algorithm.
+
+  2. ADAPTIVE EXPLORATION BEATS GLOBAL SCHEDULING
+     Responding to game state (what's revealed, what's deduced) is fundamentally
+     more informative than episode number alone.
+
+  3. LOGIC AND LEARNING ARE COMPLEMENTARY
+     Inference features (f8-f10) give hard knowledge that statistics approximate.
+
+  4. ~12% IS IRREDUCIBLE NOISE
+     First-click death is not a model failure — it is a fundamental game property.
+     Separating luck from skill via conditional win rate is essential for honest eval.
+
+BEST CONFIGURATION:
+  SARSA(lambda), lambda=0.8, Decay+Adaptive epsilon, 10-dim features
+
+  -> 69.43% overall win rate
+  -> 79.48% conditional win rate
+  -> Random baseline: 0.00%
+
+================================================================================
+  Thank you for listening. Questions?
+================================================================================
