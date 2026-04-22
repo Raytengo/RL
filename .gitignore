@@ -22,7 +22,8 @@ Thumbs.db
 # ─── Jupyter ──────────────────────────────
 .ipynb_checkpoints/
 
-# ─── 自己的临时实验 ───────────────────────
+# ─── 实验产物（体积大，本地保留，不上传）───
 scratch/
 tmp/
 training_evaluation/eval_results/
+results/
